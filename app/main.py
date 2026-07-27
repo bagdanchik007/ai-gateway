@@ -15,6 +15,8 @@ from fastapi import FastAPI
 from app.api.health import router as health_router
 from app.api.v1.router import api_v1_router
 from app.core.config import get_settings
+from app.core.middleware import RateLimitMiddleware
+from app.core.redis import close_redis
 
 logger = structlog.get_logger(__name__)
 
@@ -24,6 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     logger.info("app_startup", app_env=settings.app_env, debug=settings.app_debug)
     yield
+    await close_redis()
     logger.info("app_shutdown")
 
 
@@ -46,6 +49,8 @@ def create_app() -> FastAPI:
         debug=settings.app_debug,
         lifespan=lifespan,
     )
+
+    app.add_middleware(RateLimitMiddleware)
 
     app.include_router(health_router)
     app.include_router(api_v1_router, prefix="/api/v1")
