@@ -8,8 +8,8 @@ bleibt dabei stabil.
 
 from fastapi import APIRouter
 
+from app.api.v1.chat import router as chat_router
+
 api_v1_router = APIRouter()
 
-# Beispiel für eine zukünftige Einbindung (Etappe 3):
-# from app.api.v1.chat import router as chat_router
-# api_v1_router.include_router(chat_router, prefix="/chat", tags=["chat"])
+api_v1_router.include_router(chat_router, prefix="/chat", tags=["chat"])

@@ -9,6 +9,7 @@ Jeder geschützte Endpoint hängt einfach `Depends(get_current_api_key)` oder
 """
 
 from datetime import UTC, datetime
+from functools import lru_cache
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -20,6 +21,8 @@ from app.core.security import hash_api_key
 from app.db.models.api_key import APIKey
 from app.db.models.user import User
 from app.db.session import get_db
+from app.providers.registry import build_providers
+from app.services.llm_router import LLMRouter
 
 # auto_error=False: wir werfen die 401 selbst, damit wir konsistente
 # WWW-Authenticate-Header und Fehlermeldungen im ganzen Projekt garantieren können.
@@ -66,3 +69,13 @@ async def get_current_api_key(
 async def get_current_user(api_key: APIKey = Depends(get_current_api_key)) -> User:
     """Convenience-Dependency für Endpoints, die nur den User brauchen, nicht den Key selbst."""
     return api_key.user
+
+
+@lru_cache
+def get_llm_router() -> LLMRouter:
+    """Baut den LLMRouter einmal pro Prozess (Provider-Clients sind teuer in der Erzeugung).
+
+    Als FastAPI-Dependency verwendet, damit Endpoints/Tests ihn per
+    `dependency_overrides` leicht durch einen Fake ersetzen können.
+    """
+    return LLMRouter(build_providers())
