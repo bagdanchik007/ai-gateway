@@ -15,7 +15,8 @@ from fastapi import FastAPI
 from app.api.health import router as health_router
 from app.api.v1.router import api_v1_router
 from app.core.config import get_settings
-from app.core.middleware import RateLimitMiddleware
+from app.core.logging import configure_logging
+from app.core.middleware import RateLimitMiddleware, RequestLoggingMiddleware
 from app.core.redis import close_redis
 
 logger = structlog.get_logger(__name__)
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
     ohne Seiteneffekte durch den Modul-Import.
     """
     settings = get_settings()
+    configure_logging()
 
     app = FastAPI(
         title="AI Gateway",
@@ -51,6 +53,10 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(RateLimitMiddleware)
+    # Zuletzt hinzugefügt = äußerste Schicht: umschließt auch die vom
+    # RateLimitMiddleware früh zurückgegebenen 429-Antworten, damit wirklich
+    # jeder Request geloggt wird, nicht nur die, die den Handler erreichen.
+    app.add_middleware(RequestLoggingMiddleware)
 
     app.include_router(health_router)
     app.include_router(api_v1_router, prefix="/api/v1")
