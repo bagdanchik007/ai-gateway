@@ -71,6 +71,20 @@ async def get_current_user(api_key: APIKey = Depends(get_current_api_key)) -> Us
     return api_key.user
 
 
+async def get_current_admin_user(user: User = Depends(get_current_user)) -> User:
+    """Wie get_current_user, verlangt zusätzlich user.is_admin.
+
+    Für alle Endpoints unter /api/v1/admin — Key-Verwaltung und Usage-Stats
+    sind bewusst getrennt von der normalen Auth, damit ein kompromittierter
+    normaler API-Key keinen Zugriff auf fremde Keys/Statistiken gibt.
+    """
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin-Berechtigung erforderlich"
+        )
+    return user
+
+
 @lru_cache
 def get_llm_router() -> LLMRouter:
     """Baut den LLMRouter einmal pro Prozess (Provider-Clients sind teuer in der Erzeugung).

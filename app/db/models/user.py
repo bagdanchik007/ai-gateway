@@ -26,6 +26,11 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Steuert Zugriff auf /api/v1/admin/* (siehe app/api/deps.py:get_current_admin_user).
+    # Bewusst ein einfaches Bool statt eines Rollen-Systems — reicht für den
+    # aktuellen Bedarf (Betreiber vs. normaler API-Nutzer), ein echtes
+    # Rollen-/Permission-Modell wäre für diesen Umfang über-engineered.
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
