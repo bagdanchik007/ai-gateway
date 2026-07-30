@@ -33,7 +33,7 @@ def _get_encoding() -> tiktoken.Encoding | None:
     (openaipublic.blob.core.windows.net) — in Netzwerken mit restriktiven
     Egress-Regeln (z. B. Firmen-Proxies, gehärtete Produktionsumgebungen)
     kann das fehlschlagen. Statt das Gateway deswegen abstürzen zu lassen,
-    fällt `_count_tokens` dann auf eine grobe Zeichen-Heuristik zurück.
+    fällt `count_tokens` dann auf eine grobe Zeichen-Heuristik zurück.
     """
     global _encoding, _tiktoken_unavailable
     if _encoding is None and not _tiktoken_unavailable:
@@ -45,7 +45,12 @@ def _get_encoding() -> tiktoken.Encoding | None:
     return _encoding
 
 
-def _count_tokens(text: str) -> int:
+def count_tokens(text: str) -> int:
+    """Schätzt die Tokenanzahl von `text`. Öffentlich, da auch für die
+
+    Streaming-Usage-Schätzung in app/api/v1/chat.py gebraucht (dort gibt es
+    keine exakte Provider-Usage pro Chunk, siehe Commit 18).
+    """
     encoding = _get_encoding()
     if encoding is not None:
         return len(encoding.encode(text))
@@ -79,10 +84,10 @@ def _truncate_to_budget(messages: list[ChatMessage], token_budget: int) -> list[
     system_messages = [m for m in messages if m.role == "system"]
     other_messages = [m for m in messages if m.role != "system"]
 
-    used = sum(_count_tokens(m.content) for m in system_messages)
+    used = sum(count_tokens(m.content) for m in system_messages)
     kept: list[ChatMessage] = []
     for message in reversed(other_messages):
-        cost = _count_tokens(message.content)
+        cost = count_tokens(message.content)
         if used + cost > token_budget and kept:
             break
         used += cost

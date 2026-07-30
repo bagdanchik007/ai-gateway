@@ -6,6 +6,7 @@ Neue Modelle müssen hier immer ergänzt werden.
 """
 
 from app.db.models.api_key import APIKey
+from app.db.models.usage_record import UsageRecord
 from app.db.models.user import User
 
-__all__ = ["User", "APIKey"]
+__all__ = ["User", "APIKey", "UsageRecord"]

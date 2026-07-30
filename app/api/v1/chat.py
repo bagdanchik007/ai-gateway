@@ -8,12 +8,16 @@ dessen Ergebnis zurück. Streaming folgt in einem späteren Commit.
 
 import json
 from collections.abc import AsyncIterator
+from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_api_key, get_llm_router
 from app.db.models.api_key import APIKey
+from app.db.session import get_db
 from app.providers.exceptions import (
     ModelNotFoundError,
     ProviderAuthenticationError,
@@ -34,9 +38,27 @@ from app.schemas.llm import ChatCompletionRequest as InternalChatCompletionReque
 from app.schemas.llm import ChatMessage
 from app.services.llm_router import LLMRouter, NoProviderAvailableError
 from app.services.memory_service import append_messages, load_history
-from app.services.prompt_engine import apply_prompt_engineering
+from app.services.prompt_engine import apply_prompt_engineering, count_tokens
+from app.services.usage_tracker import record_usage
 
 router = APIRouter()
+
+logger = structlog.get_logger(__name__)
+
+
+async def _track_usage_safely(
+    db: AsyncSession,
+    api_key_id: UUID | None,
+    provider: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> None:
+    """Wrapper um record_usage: ein Tracking-Fehler darf niemals die Chat-Antwort verhindern."""
+    try:
+        await record_usage(db, api_key_id, provider, model, prompt_tokens, completion_tokens)
+    except Exception as exc:  # noqa: BLE001 — bewusst breit, siehe Docstring
+        logger.warning("usage.tracking_failed", error=str(exc), provider=provider, model=model)
 
 
 def _new_messages(body: ChatCompletionRequest) -> list[ChatMessage]:
@@ -86,6 +108,8 @@ async def _sse_stream(
     fallback_models: list[str],
     conversation_id: str | None,
     new_messages: list[ChatMessage],
+    db: AsyncSession,
+    api_key_id: UUID,
 ) -> AsyncIterator[str]:
     """Erzeugt Server-Sent Events im OpenAI-Streaming-Format.
 
@@ -96,11 +120,15 @@ async def _sse_stream(
     """
     completion_id = new_completion_id()
     assistant_content = ""
+    seen_provider = "unknown"
+    seen_model = internal_request.model
     try:
         async for chunk in llm_router.stream_chat_completion(
             internal_request, fallback_models=fallback_models
         ):
             assistant_content += chunk.delta
+            seen_provider = chunk.provider
+            seen_model = chunk.model
             body = ChatCompletionChunkBody(
                 id=completion_id,
                 model=chunk.model,
@@ -128,6 +156,15 @@ async def _sse_stream(
             conversation_id, [*new_messages, ChatMessage(role="assistant", content=assistant_content)]
         )
 
+    # Streaming-Chunks tragen keine exakte Provider-Usage (die meisten Provider
+    # liefern die erst mit dem allerletzten Chunk, wenn überhaupt) — daher hier
+    # eine Schätzung per Tokenizer statt exakter Zahlen wie im Non-Stream-Pfad.
+    prompt_tokens = sum(count_tokens(m.content) for m in internal_request.messages)
+    completion_tokens = count_tokens(assistant_content)
+    await _track_usage_safely(
+        db, api_key_id, seen_provider, seen_model, prompt_tokens, completion_tokens
+    )
+
 
 @router.post(
     "/completions",
@@ -138,6 +175,7 @@ async def create_chat_completion(
     body: ChatCompletionRequest,
     api_key: APIKey = Depends(get_current_api_key),
     llm_router: LLMRouter = Depends(get_llm_router),
+    db: AsyncSession = Depends(get_db),
 ) -> ChatCompletionResponseBody | StreamingResponse:
     new_messages = _new_messages(body)
     internal_request = apply_prompt_engineering(await _to_internal_request(body))
@@ -145,7 +183,13 @@ async def create_chat_completion(
     if body.stream:
         return StreamingResponse(
             _sse_stream(
-                llm_router, internal_request, body.fallback_models, body.conversation_id, new_messages
+                llm_router,
+                internal_request,
+                body.fallback_models,
+                body.conversation_id,
+                new_messages,
+                db,
+                api_key.id,
             ),
             media_type="text/event-stream",
         )
@@ -162,6 +206,15 @@ async def create_chat_completion(
             body.conversation_id,
             [*new_messages, ChatMessage(role="assistant", content=result.content)],
         )
+
+    await _track_usage_safely(
+        db,
+        api_key.id,
+        result.provider,
+        result.model,
+        result.usage.prompt_tokens,
+        result.usage.completion_tokens,
+    )
 
     return ChatCompletionResponseBody(
         id=new_completion_id(),
