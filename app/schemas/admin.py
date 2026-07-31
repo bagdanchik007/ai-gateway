@@ -7,6 +7,12 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class APIKeyCreateRequest(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"user_email": "kunde@example.com", "name": "production-key"}]
+        }
+    }
+
     user_email: EmailStr = Field(..., description="Wird angelegt, falls noch kein User existiert")
     name: str = Field(..., min_length=1, max_length=100, description="Anzeigename des Keys")
     expires_at: datetime | None = None

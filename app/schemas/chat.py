@@ -22,6 +22,18 @@ class ChatCompletionMessageParam(BaseModel):
 class ChatCompletionRequest(BaseModel):
     """Request-Body für POST /api/v1/chat/completions."""
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "model": "openai:gpt-4o-mini",
+                    "messages": [{"role": "user", "content": "Erkläre mir Kubernetes in 2 Sätzen."}],
+                    "fallback_models": ["anthropic:claude-3-5-haiku-20241022"],
+                }
+            ]
+        }
+    }
+
     model: str = Field(..., description="'<provider>:<model>', z. B. 'openai:gpt-4o-mini'")
     messages: list[ChatCompletionMessageParam]
     temperature: float = Field(default=1.0, ge=0.0, le=2.0)
