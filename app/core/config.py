@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     # --- Rate limiting ---
     rate_limit_requests_per_minute: int = Field(default=60, gt=0)
 
+    # --- Admin-Panel (SQLAdmin) ---
+    # Das Gateway hat kein Passwort-Login für normale User (nur API-Keys,
+    # siehe app/core/security.py). Fürs interne Admin-Panel reicht ein
+    # einzelnes geteiltes Passwort — es ist nur für Betreiber gedacht und
+    # läuft i. d. R. hinter einem internen Netz/VPN, kein öffentlicher Login.
+    admin_panel_secret: SecretStr | None = None
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
