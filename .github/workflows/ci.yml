@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Echte Postgres/Redis-Instanzen statt Mocks — die Migrationen und
+    # DB-lastigen Codepfade sollen gegen dieselbe Datenbank-Engine laufen
+    # wie in Produktion, nicht gegen SQLite o. Ä.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: gateway
+          POSTGRES_PASSWORD: gateway
+          POSTGRES_DB: ai_gateway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gateway"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      DATABASE_URL: postgresql+asyncpg://gateway:gateway@localhost:5432/ai_gateway
+      REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.3
+
+      - name: Cache Poetry venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.in-project true
+          poetry install --no-interaction
+
+      - name: Lint (ruff)
+        run: poetry run ruff check app/ tests/
+
+      - name: Type-check (mypy)
+        run: poetry run mypy app/
+
+      - name: Run migrations against real Postgres
+        run: poetry run alembic upgrade head
+
+      - name: Run tests
+        run: poetry run pytest tests/ -v
