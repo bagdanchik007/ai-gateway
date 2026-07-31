@@ -11,18 +11,14 @@ from collections.abc import AsyncIterator
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_api_key, get_llm_router
 from app.db.models.api_key import APIKey
 from app.db.session import get_db
-from app.providers.exceptions import (
-    ModelNotFoundError,
-    ProviderAuthenticationError,
-    ProviderError,
-)
+from app.providers.exceptions import ProviderError
 from app.schemas.chat import (
     ChatCompletionChoice,
     ChatCompletionChunkBody,
@@ -36,7 +32,7 @@ from app.schemas.chat import (
 )
 from app.schemas.llm import ChatCompletionRequest as InternalChatCompletionRequest
 from app.schemas.llm import ChatMessage
-from app.services.llm_router import LLMRouter, NoProviderAvailableError
+from app.services.llm_router import LLMRouter
 from app.services.memory_service import append_messages, load_history
 from app.services.prompt_engine import apply_prompt_engineering, count_tokens
 from app.services.usage_tracker import record_usage
@@ -82,24 +78,6 @@ async def _to_internal_request(body: ChatCompletionRequest) -> InternalChatCompl
         temperature=body.temperature,
         max_tokens=body.max_tokens,
     )
-
-
-def _to_http_exception(exc: ProviderError) -> HTTPException:
-    """Übersetzt einen ProviderError in eine passende HTTP-Antwort.
-
-    Ausführlichere, strukturierte Fehlerbehandlung (eigenes Error-Response-
-    Schema analog zu OpenAI) folgt in Etappe 5; hier erstmal die korrekten
-    Status Codes, damit Clients nicht überall 500 sehen.
-    """
-    if isinstance(exc, ProviderAuthenticationError):
-        # Der *Provider*-Key ist ungültig (Server-Fehlkonfiguration), nicht der
-        # API-Key des Aufrufers — daher 502, nicht 401.
-        return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
-    if isinstance(exc, ModelNotFoundError):
-        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    if isinstance(exc, NoProviderAvailableError):
-        return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
-    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
 
 async def _sse_stream(
@@ -194,12 +172,12 @@ async def create_chat_completion(
             media_type="text/event-stream",
         )
 
-    try:
-        result = await llm_router.chat_completion(
-            internal_request, fallback_models=body.fallback_models
-        )
-    except ProviderError as exc:
-        raise _to_http_exception(exc) from exc
+    # Kein try/except mehr nötig: ein ProviderError propagiert bis zu den
+    # globalen Exception-Handlern (app/core/exception_handlers.py), die ihn
+    # in eine konsistente Fehlerantwort übersetzen.
+    result = await llm_router.chat_completion(
+        internal_request, fallback_models=body.fallback_models
+    )
 
     if body.conversation_id:
         await append_messages(
