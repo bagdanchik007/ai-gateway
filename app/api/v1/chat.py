@@ -1,10 +1,4 @@
-"""OpenAI-kompatibler Chat-Completions-Endpoint.
-
-POST /api/v1/chat/completions — erfordert `Authorization: Bearer <api-key>`.
-Übersetzt zwischen der öffentlichen (OpenAI-kompatiblen) Wire-Form und dem
-internen, provider-agnostischen Schema, ruft den LLMRouter auf und übersetzt
-dessen Ergebnis zurück. Streaming folgt in einem späteren Commit.
-"""
+"""OpenAI-kompatibler Chat-Completions-Endpoint."""
 
 import json
 from collections.abc import AsyncIterator
@@ -50,26 +44,26 @@ async def _track_usage_safely(
     prompt_tokens: int,
     completion_tokens: int,
 ) -> None:
-    """Wrapper um record_usage: ein Tracking-Fehler darf niemals die Chat-Antwort verhindern."""
     try:
         await record_usage(db, api_key_id, provider, model, prompt_tokens, completion_tokens)
-    except Exception as exc:  # noqa: BLE001 — bewusst breit, siehe Docstring
+    except Exception as exc:  # noqa: BLE001
         logger.warning("usage.tracking_failed", error=str(exc), provider=provider, model=model)
 
 
 def _new_messages(body: ChatCompletionRequest) -> list[ChatMessage]:
-    """Die vom Client in diesem Request neu mitgeschickten Nachrichten (ohne Historie)."""
-    return [ChatMessage(role=m.role, content=m.content) for m in body.messages]
+    return [
+        ChatMessage(
+            role=m.role,
+            content=m.content,
+            tool_calls=m.tool_calls,
+            tool_call_id=m.tool_call_id,
+            name=m.name,
+        )
+        for m in body.messages
+    ]
 
 
 async def _to_internal_request(body: ChatCompletionRequest) -> InternalChatCompletionRequest:
-    """Übersetzt die öffentliche Request-Form in unser internes Schema.
-
-    Falls `conversation_id` gesetzt ist, wird die in Redis gespeicherte
-    Historie (siehe app/services/memory_service.py) vor die neuen Nachrichten
-    gestellt — der Client muss dann nicht bei jedem Request den gesamten
-    Verlauf mitschicken.
-    """
     new_messages = _new_messages(body)
     history = await load_history(body.conversation_id) if body.conversation_id else []
     return InternalChatCompletionRequest(
@@ -77,6 +71,8 @@ async def _to_internal_request(body: ChatCompletionRequest) -> InternalChatCompl
         messages=[*history, *new_messages],
         temperature=body.temperature,
         max_tokens=body.max_tokens,
+        tools=body.tools,
+        tool_choice=body.tool_choice,
     )
 
 
@@ -89,13 +85,6 @@ async def _sse_stream(
     db: AsyncSession,
     api_key_id: UUID,
 ) -> AsyncIterator[str]:
-    """Erzeugt Server-Sent Events im OpenAI-Streaming-Format.
-
-    Ein Fehler *während* des Streamens kann dem Client nicht mehr per
-    HTTP-Statuscode mitgeteilt werden (Header/200 sind längst gesendet) —
-    er wird stattdessen als letztes SSE-Event mit einem "error"-Feld
-    ausgeliefert, danach folgt trotzdem das reguläre [DONE].
-    """
     completion_id = new_completion_id()
     assistant_content = ""
     seen_provider = "unknown"
@@ -112,7 +101,9 @@ async def _sse_stream(
                 model=chunk.model,
                 choices=[
                     ChatCompletionChunkChoice(
-                        delta=ChatCompletionChunkDelta(content=chunk.delta or None),
+                        delta=ChatCompletionChunkDelta(
+                            content=chunk.delta or None, tool_calls=chunk.tool_calls
+                        ),
                         finish_reason=chunk.finish_reason,
                     )
                 ],
@@ -127,17 +118,11 @@ async def _sse_stream(
     yield "data: [DONE]\n\n"
 
     if conversation_id:
-        # Erst NACH erfolgreichem Streamende speichern — bei einem Fehler
-        # (siehe except oben, endet dort per `return`) landet keine
-        # unvollständige Assistant-Antwort in der Historie.
         await append_messages(
             conversation_id, [*new_messages, ChatMessage(role="assistant", content=assistant_content)]
         )
 
-    # Streaming-Chunks tragen keine exakte Provider-Usage (die meisten Provider
-    # liefern die erst mit dem allerletzten Chunk, wenn überhaupt) — daher hier
-    # eine Schätzung per Tokenizer statt exakter Zahlen wie im Non-Stream-Pfad.
-    prompt_tokens = sum(count_tokens(m.content) for m in internal_request.messages)
+    prompt_tokens = sum(count_tokens(m.content or "") for m in internal_request.messages)
     completion_tokens = count_tokens(assistant_content)
     await _track_usage_safely(
         db, api_key_id, seen_provider, seen_model, prompt_tokens, completion_tokens
@@ -172,9 +157,6 @@ async def create_chat_completion(
             media_type="text/event-stream",
         )
 
-    # Kein try/except mehr nötig: ein ProviderError propagiert bis zu den
-    # globalen Exception-Handlern (app/core/exception_handlers.py), die ihn
-    # in eine konsistente Fehlerantwort übersetzen.
     result = await llm_router.chat_completion(
         internal_request, fallback_models=body.fallback_models
     )
@@ -199,7 +181,9 @@ async def create_chat_completion(
         model=result.model,
         choices=[
             ChatCompletionChoice(
-                message=ChatCompletionMessageParam(role="assistant", content=result.content),
+                message=ChatCompletionMessageParam(
+                    role="assistant", content=result.content, tool_calls=result.tool_calls
+                ),
                 finish_reason=result.finish_reason,
             )
         ],

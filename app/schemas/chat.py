@@ -1,27 +1,23 @@
-"""OpenAI-kompatible Schemas für den öffentlichen Chat-Completions-Endpoint.
-
-Diese Schemas bilden die Wire-Struktur von
-https://platform.openai.com/docs/api-reference/chat nach, damit bestehende
-OpenAI-SDKs/Clients unser Gateway als Drop-in-Replacement nutzen können
-(nur `base_url` ändern). Intern übersetzen wir in/aus den provider-
-agnostischen Schemas aus app/schemas/llm.py.
-"""
+"""OpenAI-kompatible Schemas für den öffentlichen Chat-Completions-Endpoint."""
 
 import time
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.llm import Tool, ToolCall
+
 
 class ChatCompletionMessageParam(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
 
 
 class ChatCompletionRequest(BaseModel):
-    """Request-Body für POST /api/v1/chat/completions."""
-
     model_config = {
         "json_schema_extra": {
             "examples": [
@@ -39,18 +35,12 @@ class ChatCompletionRequest(BaseModel):
     temperature: float = Field(default=1.0, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, gt=0)
     stream: bool = False
-
-    # Gateway-Erweiterungen, kein OpenAI-Standard — von echten OpenAI-Clients
-    # einfach ignoriert (extra Felder werden von deren SDKs nicht gesendet),
-    # nützlich für eigene Clients dieses Gateways.
-    fallback_models: list[str] = Field(
-        default_factory=list,
-        description="Fallback-Kette bei Providerfehlern, z. B. ['anthropic:claude-3-5-haiku-20241022']",
+    fallback_models: list[str] = Field(default_factory=list)
+    conversation_id: str | None = Field(default=None)
+    tools: list[Tool] | None = Field(
+        default=None, description="Function-Definitionen, die das Modell aufrufen kann"
     )
-    conversation_id: str | None = Field(
-        default=None,
-        description="Falls gesetzt: Server-seitige Chat-Historie (siehe memory_service) wird vorangestellt",
-    )
+    tool_choice: str | dict[str, Any] | None = Field(default=None)
 
 
 class ChatCompletionChoice(BaseModel):
@@ -77,6 +67,7 @@ class ChatCompletionResponseBody(BaseModel):
 class ChatCompletionChunkDelta(BaseModel):
     role: Literal["assistant"] | None = None
     content: str | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 class ChatCompletionChunkChoice(BaseModel):
@@ -94,5 +85,4 @@ class ChatCompletionChunkBody(BaseModel):
 
 
 def new_completion_id() -> str:
-    """Erzeugt eine OpenAI-ähnliche Completion-ID (Präfix 'chatcmpl-')."""
     return f"chatcmpl-{uuid.uuid4().hex}"
