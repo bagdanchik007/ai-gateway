@@ -29,6 +29,7 @@ from app.schemas.llm import ChatMessage
 from app.services.llm_router import LLMRouter
 from app.services.memory_service import append_messages, load_history
 from app.services.prompt_engine import apply_prompt_engineering, count_tokens
+from app.services.rag.retrieval import augment_with_context
 from app.services.usage_tracker import record_usage
 
 router = APIRouter()
@@ -141,7 +142,12 @@ async def create_chat_completion(
     db: AsyncSession = Depends(get_db),
 ) -> ChatCompletionResponseBody | StreamingResponse:
     new_messages = _new_messages(body)
-    internal_request = apply_prompt_engineering(await _to_internal_request(body))
+    internal_request = await _to_internal_request(body)
+    if body.rag_collection:
+        internal_request = await augment_with_context(
+            db, internal_request, collection=body.rag_collection
+        )
+    internal_request = apply_prompt_engineering(internal_request)
 
     if body.stream:
         return StreamingResponse(

@@ -41,6 +41,10 @@ class ChatCompletionRequest(BaseModel):
         default=None, description="Function-Definitionen, die das Modell aufrufen kann"
     )
     tool_choice: str | dict[str, Any] | None = Field(default=None)
+    rag_collection: str | None = Field(
+        default=None,
+        description="Falls gesetzt: relevanter Kontext aus dieser RAG-Collection wird ergänzt",
+    )
 
 
 class ChatCompletionChoice(BaseModel):
