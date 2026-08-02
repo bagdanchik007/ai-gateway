@@ -1,8 +1,6 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Stage 1: builder ----------
-# Собираем зависимости через Poetry в изолированный venv,
-# чтобы в финальный образ не тащить Poetry и кэш резолвера.
 FROM python:3.12-slim AS builder
 
 ENV POETRY_VERSION=1.8.3 \
@@ -20,7 +18,6 @@ RUN pip install "poetry==${POETRY_VERSION}"
 
 WORKDIR /app
 
-# Кэшируем установку зависимостей отдельно от копирования кода приложения
 COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-root --only main --no-ansi
 
@@ -31,7 +28,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
-# Непривилегированный пользователь — не запускаем сервис от root
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 WORKDIR /app
@@ -40,6 +36,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
+COPY frontend ./frontend
 
 RUN chown -R appuser:appuser /app
 USER appuser

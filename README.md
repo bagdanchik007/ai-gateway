@@ -2,85 +2,91 @@
 
 Production-grade **AI Gateway** — ein einheitlicher Einstiegspunkt für mehrere
 LLM-Provider (OpenAI, Anthropic, Grok, lokale Modelle u. a.) mit Routing,
-Fallback-Logik, Usage-/Kosten-Tracking, API-Key-Authentifizierung und einer
-OpenAI-kompatiblen Chat Completions API.
+Fallback-Logik, Tool Calling, RAG, Usage-/Kosten-Tracking, API-Key-
+Authentifizierung und einer OpenAI-kompatiblen Chat Completions API
+(REST + Streaming + WebSocket).
 
-Das ist kein reiner Proxy: das Gateway bringt eine Prompt-Engineering-Schicht,
-Chat-Memory, Usage-Tracking und Rate-Limiting mit und ist von Anfang an für
-Tool Calling / RAG / Multi-Agent-Szenarien ausgelegt.
+## Features
 
-## Kernprinzipien
+- OpenAI-kompatible Chat Completions API (`/api/v1/chat/completions`), inkl. Streaming (SSE)
+- WebSocket-Chat (`/api/v1/chat/ws`) für persistente Multi-Turn-Sessions
+- Multi-Provider-Routing mit automatischem Fallback (OpenAI, Anthropic, Grok, lokale Modelle)
+- Tool Calling / Function Calling (provider-übergreifend normalisiert)
+- Basic-RAG-Modul (`/api/v1/rag/*`) — Dokumente einbetten und in Chats einbeziehen
+- API-Key-Auth, Rate Limiting, strukturiertes Logging, Usage-/Kosten-Tracking
+- Admin-API + Admin-Panel (SQLAdmin) unter `/admin-panel`
+- Minimale statische Demo-UI unter `/app`
+- Vollständige Testsuite + CI (GitHub Actions)
 
-- **Async-first**: sämtliches I/O (DB, HTTP zu den Providern, Redis) ist asynchron.
-- **Clean Architecture**: strikte Trennung der Schichten — API / services / providers / db.
-- **Erweiterbarkeit**: ein neuer LLM-Provider = eine neue Klasse, die `BaseLLMProvider`
-  implementiert, ohne Änderungen am restlichen Code.
-- **Production-ready von Anfang an**: Typisierung (Pydantic v2), Error Handling,
-  strukturiertes Logging, Tests, CI.
+## Schnellstart mit Docker (empfohlen für Deployment)
 
-## Stack
+```bash
+git clone https://github.com/bagdanchik007/ai-gateway.git
+cd ai-gateway
+cp .env.example .env
+# .env bearbeiten: SECRET_KEY, ADMIN_PANEL_SECRET, mind. einen Provider-Key setzen
 
-| Schicht          | Technologie                          |
-|------------------|---------------------------------------|
-| Sprache          | Python 3.12                          |
-| Web-Framework    | FastAPI                              |
-| Validierung      | Pydantic v2 / pydantic-settings      |
-| Datenbank        | PostgreSQL + SQLAlchemy 2.0 (async)  |
-| Migrationen      | Alembic                              |
-| Cache / Limits   | Redis                                |
-| Dependencies     | Poetry                               |
-| Containerisierung| Docker / docker-compose              |
-
-## Projektstruktur
-
-```
-app/
-├── api/v1/          # HTTP-Routen (versioniert), dünne Schicht — nur I/O und Service-Aufrufe
-├── core/             # Konfiguration, Security, Middleware, allgemeine App-Settings
-├── providers/        # Adapter für LLM-Provider (base.py + openai.py, anthropic.py, grok.py, ...)
-├── services/         # Business-Logik: llm_router, prompt_engine, memory, usage_tracker
-├── db/               # SQLAlchemy Engine/Session, Modelle
-├── schemas/          # Pydantic-Schemas für Requests/Responses
-└── utils/            # Allgemeine Helper ohne Business-Logik
-
-tests/
-├── unit/
-└── integration/
-
-alembic/              # DB-Migrationen
+docker compose up -d --build
+docker compose exec app alembic upgrade head
 ```
 
-### Warum so
+Danach erreichbar unter:
+- API-Doku: http://localhost:8000/docs
+- Demo-Chat-UI: http://localhost:8000/app/
+- Admin-Panel: http://localhost:8000/admin-panel
+- Health-Check: http://localhost:8000/health
 
-- **`providers/`** isoliert die Eigenheiten jedes Anbieters (Request-Formate, Streaming,
-  Tokenizer) hinter einem einheitlichen `BaseLLMProvider`-Interface. Ein neuer Provider
-  ändert weder `api/` noch `services/`.
-- **`services/llm_router`** entscheidet, welcher Provider/Model die Anfrage bedient, und
-  enthält die Fallback-Logik (Retry auf einen anderen Provider bei Fehler/Nichtverfügbarkeit).
-- **`api/v1`** enthält keine Business-Logik — nur Input-Validierung, Service-Aufruf und
-  Response-Aufbau. So lässt sich künftig problemlos ein `v2` hinzufügen, ohne Logik zu duplizieren.
+Einen ersten Admin-User + API-Key anlegen (Admin-Flag muss danach manuell in
+der DB gesetzt werden, siehe `docs/API.md`):
 
-## Roadmap
+```bash
+curl -X POST http://localhost:8000/api/v1/admin/api-keys \
+  -H "Content-Type: application/json" \
+  -d '{"user_email": "admin@example.com", "name": "erster-key"}'
+```
 
-Das Projekt entsteht schrittweise (siehe `ROADMAP.md` / git log für die Commit-Historie):
-
-0. **Projekt-Initialisierung** — Struktur, Poetry, Docker, Config, Health Check
-1. **Foundation & Auth** — DB, Modelle, API-Key-Authentifizierung, Rate Limiting
-2. **LLM Providers** — Basis-Interface, OpenAI/Anthropic/Grok/lokal, Routing mit Fallback
-3. **Chat API** — OpenAI-kompatibler Endpoint, Streaming, Prompt Engineering, Chat-Memory
-4. **Usage & Monitoring** — Usage-/Kosten-Tracking, Logging
-5. **Polish & Admin** — Admin-Panel, Error Handling, Dokumentation, Tests und CI
-6. **Advanced** — Tool Calling, RAG, WebSocket-Chat, Frontend
-
-## Quickstart (entsteht mit dem Projektfortschritt)
+## Lokale Entwicklung ohne Docker
 
 ```bash
 poetry install
 cp .env.example .env
-docker-compose up -d db redis
+docker compose up -d db redis   # nur DB + Redis in Containern
+poetry run alembic upgrade head
 poetry run uvicorn app.main:app --reload
+```
+
+## Tests
+
+```bash
+poetry run pytest tests/ -v
+poetry run ruff check app/ tests/
+poetry run mypy app/
+```
+
+## Weiterführende Doku
+
+Siehe [`docs/API.md`](docs/API.md) für Endpoint-Referenz, Auth-Fluss,
+Fehlerformat und End-to-End-Beispiele (inkl. Streaming, Tool Calling, RAG,
+Fallback-Ketten).
+
+## Architektur
+
+```
+app/
+├── api/v1/          # HTTP- und WebSocket-Routen
+├── admin/            # SQLAdmin-Panel (Views, Auth)
+├── core/             # Konfiguration, Security, Middleware, Logging, Exceptions
+├── providers/        # Adapter für LLM-Provider (base.py + openai.py, anthropic.py)
+├── services/         # Business-Logik: llm_router, prompt_engine, memory, rag/, usage_tracker
+├── db/               # SQLAlchemy Engine/Session, Modelle
+└── schemas/          # Pydantic-Schemas
+
+frontend/              # Statische Demo-Chat-UI (kein Build-Schritt)
+tests/                  # Unit- und Integrationstests
+alembic/                # DB-Migrationen
+.github/workflows/      # CI (Lint, Type-Check, Migrationen, Tests)
 ```
 
 ## Lizenz
 
-TBD
+MIT

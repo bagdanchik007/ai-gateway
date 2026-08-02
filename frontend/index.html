@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Gateway — Chat</title>
+  <link rel="stylesheet" href="/app/css/style.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>AI Gateway</h1>
+      <label>
+        API-Key
+        <input id="api-key" type="password" placeholder="sk-gw-..." autocomplete="off" />
+      </label>
+      <label>
+        Modell
+        <input id="model" type="text" value="openai:gpt-4o-mini" autocomplete="off" />
+      </label>
+      <label>
+        Fallback-Modelle (kommagetrennt, optional)
+        <input id="fallback-models" type="text" placeholder="anthropic:claude-3-5-haiku-20241022" />
+      </label>
+      <label class="checkbox">
+        <input id="use-stream" type="checkbox" checked />
+        Streaming
+      </label>
+      <button id="clear-btn" type="button">Verlauf löschen</button>
+      <p class="hint">
+        Der Key wird nur lokal im Browser gespeichert und bei jedem Request als
+        <code>Authorization: Bearer …</code>-Header mitgeschickt — nie an einen
+        anderen Server als dieses Gateway.
+      </p>
+      <p class="hint">
+        Diese Oberfläche ist eine minimale Referenzimplementierung
+        (statisch, ohne Build-Schritt) — Zweck ist, die API interaktiv
+        auszuprobieren, kein produktionsreifes Chat-Frontend.
+      </p>
+    </aside>
+
+    <main class="chat">
+      <div id="messages" class="messages"></div>
+      <form id="chat-form" class="composer">
+        <textarea id="message-input" placeholder="Nachricht eingeben…" rows="2" required></textarea>
+        <button type="submit">Senden</button>
+      </form>
+    </main>
+  </div>
+
+  <script src="/app/js/app.js"></script>
+</body>
+</html>
